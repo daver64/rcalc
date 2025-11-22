@@ -1,6 +1,6 @@
 # RCalc - Mathematical Expression Calculator
 
-A command-line mathematical expression calculator written in C that supports variables, user-defined functions, programming logic, and a comprehensive range of mathematical operations.
+A command-line mathematical expression calculator written in C that supports variables, user-defined functions, script loading, programming logic, and a comprehensive range of mathematical operations.
 
 ## Features
 
@@ -55,6 +55,7 @@ A command-line mathematical expression calculator written in C that supports var
 - Unary plus and minus operators
 - **Variables** - declare and use variables
 - **User-defined functions** - create custom functions
+- **Script loading** - load function libraries from .calc files
 - **Conditional logic** - if/then expressions and comparisons
 - **Utility functions** - min, max, clamp, lerp, hypot
 - Interactive REPL (Read-Eval-Print Loop)
