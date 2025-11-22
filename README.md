@@ -82,6 +82,12 @@ Run the calculator to enter interactive mode:
 rcalc.exe      # Windows
 ```
 
+Or load script files at startup:
+```bash
+./rcalc script.calc              # Load one script
+./rcalc lib1.calc lib2.calc      # Load multiple scripts
+```
+
 ### Interactive Mode Examples
 
 ```
@@ -109,6 +115,15 @@ Function 'square' defined
 
 > square(5)
 = 25
+
+> load "example.calc"
+Loaded 10 functions, 2 variables from example.calc
+
+> circle_area(10)
+= 314.1592654
+
+> kinetic_energy(70, 25)
+= 21875
 
 > min(10, 20)
 = 10
@@ -302,6 +317,56 @@ Function 'smooth_step' defined
 > smooth_step(0, 10, 5)
 = 0.5
 ```
+
+## Script Files
+
+You can create reusable libraries of functions and variables in script files with `.calc` or `.rcalc` extensions.
+
+### Script File Format
+
+```rcalc
+# This is a comment - lines starting with # are ignored
+
+# Define variables
+var gravity = 9.81;
+var speed_of_light = 299792458;
+
+# Define functions (same syntax as REPL)
+var square(var n) {
+  return n * n;
+}
+
+var circle_area(var radius) {
+  return pi * square(radius);
+}
+
+var kinetic_energy(var mass, var velocity) {
+  return 0.5 * mass * square(velocity);
+}
+```
+
+### Loading Scripts
+
+**From command line:**
+```bash
+./rcalc myscript.calc           # Loads script and starts REPL
+./rcalc lib1.calc lib2.calc     # Load multiple scripts
+```
+
+**From REPL:**
+```
+> load "myscript.calc"
+Loaded 3 functions, 2 variables from myscript.calc
+
+> load geometry.calc            # Quotes optional for simple filenames
+Loaded 5 functions from geometry.calc
+```
+
+### Example Scripts
+
+The repository includes example scripts:
+- `example.calc` - Math utilities, physics constants, temperature conversion
+- `geometry.calc` - Geometry functions for rectangles, triangles, spheres
 
 ## Function Reference
 

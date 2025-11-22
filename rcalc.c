@@ -144,7 +144,14 @@ void show_help(void) {
     
     print_normal("COMMANDS:\n");
     print_normal("  help                     # Show this help\n");
+    print_normal("  load \"filename.calc\"    # Load and execute a script file\n");
     print_normal("  quit                     # Exit calculator\n\n");
+    
+    print_normal("SCRIPT FILES:\n");
+    print_normal("  You can load script files containing function and variable definitions.\n");
+    print_normal("  Use .calc or .rcalc extension. Lines starting with # are comments.\n");
+    print_normal("  Command line: rcalc script.calc\n");
+    print_normal("  In REPL: load \"script.calc\"\n\n");
     
     print_normal("EXAMPLES:\n");
     print_normal("  > sin(pi/2)              # = 1\n");
@@ -213,6 +220,7 @@ typedef struct UserFunction {
 // Global symbol tables
 static Variable *variables = NULL;
 static UserFunction *user_functions = NULL;
+static int silent_mode = 0;  // For suppressing output during script loading
 
 // Token types for parsing
 typedef enum {
@@ -231,6 +239,7 @@ typedef enum {
     CALC_TOKEN_RBRACE,        // }
     CALC_TOKEN_VAR,           // var keyword
     CALC_TOKEN_RETURN,        // return keyword
+    CALC_TOKEN_LOAD,          // load keyword
     CALC_TOKEN_END
 } CalcTokenType;
 
@@ -269,6 +278,8 @@ static Parameter* create_parameter(const char *name);
 static void free_parameters(Parameter *params);
 static UserFunction* create_user_function(const char *name, Parameter *params, ASTNode *body);
 static double evaluate_user_function(UserFunction *func, double *args, int arg_count);
+static int load_script_file(const char *filename);
+static void parse_load_command(const char *line);
 
 // AST functions
 static ASTNode* create_number_node(double value);
@@ -978,9 +989,9 @@ static void get_next_token(void) {
     }
     
     // Functions, keywords, constants, and identifiers
-    if (isalpha(*expr_pos)) {
+    if (isalpha(*expr_pos) || *expr_pos == '_') {
         int i = 0;
-        while (isalnum(*expr_pos) && i < 31) {
+        while ((isalnum(*expr_pos) || *expr_pos == '_') && i < 31) {
             current_token.name[i++] = *expr_pos++;
         }
         current_token.name[i] = '\0';
@@ -990,6 +1001,8 @@ static void get_next_token(void) {
             current_token.type = CALC_TOKEN_VAR;
         } else if (strcmp(current_token.name, "return") == 0) {
             current_token.type = CALC_TOKEN_RETURN;
+        } else if (strcmp(current_token.name, "load") == 0) {
+            current_token.type = CALC_TOKEN_LOAD;
         } else if (strcmp(current_token.name, "pi") == 0) {
             current_token.type = CALC_TOKEN_CONSTANT;
             current_token.value = M_PI;
@@ -1265,7 +1278,9 @@ static void parse_function_definition(void) {
     // Create the function with AST body
     create_user_function(func_name, params, body);
     
-    printf("Function '%s' defined\n", func_name);
+    if (!silent_mode) {
+        printf("Function '%s' defined\n", func_name);
+    }
 }
 
 // Parse factors (numbers, constants, functions, parentheses, variables)
@@ -1389,7 +1404,9 @@ static double parse_statement(void) {
                 }
                 
                 double value = parse_assignment();
-                printf("Variable '%s' = %.10g\n", name, value);
+                if (!silent_mode) {
+                    printf("Variable '%s' = %.10g\n", name, value);
+                }
                 return value;
             }
         }
@@ -1409,7 +1426,9 @@ static double parse_statement(void) {
             expr_pos = saved_pos;
             current_token = saved_token;
             double value = parse_assignment();
-            printf("Variable '%s' = %.10g\n", name, value);
+            if (!silent_mode) {
+                printf("Variable '%s' = %.10g\n", name, value);
+            }
             return value;
         } else if (current_token.type == CALC_TOKEN_LPAREN && lookup_user_function(name)) {
             // It's a user-defined function call, restore and parse with AST
@@ -1530,6 +1549,246 @@ double compute_expression(const char *expression)
     return result;
 }
 
+// Load and execute a script file
+static int load_script_file(const char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        fprintf(stderr, "Error: Cannot open file '%s'\n", filename);
+        return -1;
+    }
+    
+    char *line = NULL;
+    size_t line_capacity = 0;
+    char *accumulated = malloc(4096);
+    size_t accumulated_capacity = 4096;
+    size_t accumulated_length = 0;
+    
+    if (!accumulated) {
+        fprintf(stderr, "Error: Memory allocation failed\n");
+        fclose(fp);
+        return -1;
+    }
+    
+    accumulated[0] = '\0';
+    
+    int line_num = 0;
+    int func_count = 0;
+    int var_count = 0;
+    int brace_count = 0;
+    int paren_count = 0;
+    int in_multiline = 0;
+    int saved_func_count = 0;
+    int saved_var_count = 0;
+    
+    // Enable silent mode for script loading
+    silent_mode = 1;
+    
+    // Count existing functions and variables
+    UserFunction *uf = user_functions;
+    while (uf) {
+        saved_func_count++;
+        uf = uf->next;
+    }
+    Variable *v = variables;
+    while (v) {
+        saved_var_count++;
+        v = v->next;
+    }
+    
+    while (getline(&line, &line_capacity, fp) != -1) {
+        line_num++;
+        
+        // Remove trailing newline
+        size_t len = strlen(line);
+        if (len > 0 && line[len - 1] == '\n') {
+            line[len - 1] = '\0';
+            len--;
+        }
+        
+        // Skip empty lines and comments
+        char *trimmed = line;
+        while (*trimmed && isspace(*trimmed)) trimmed++;
+        if (*trimmed == '\0' || *trimmed == '#') {
+            continue;
+        }
+        
+        // Calculate space needed
+        size_t space_needed = accumulated_length + (accumulated_length > 0 ? 1 : 0) + len + 1;
+        
+        // Grow buffer if needed
+        if (space_needed > accumulated_capacity) {
+            size_t new_capacity = accumulated_capacity * 2;
+            while (new_capacity < space_needed) {
+                new_capacity *= 2;
+            }
+            char *new_accumulated = realloc(accumulated, new_capacity);
+            if (!new_accumulated) {
+                fprintf(stderr, "Error: Memory allocation failed at line %d\n", line_num);
+                free(accumulated);
+                free(line);
+                fclose(fp);
+                return -1;
+            }
+            accumulated = new_accumulated;
+            accumulated_capacity = new_capacity;
+        }
+        
+        // Append line
+        if (accumulated_length > 0) {
+            strcat(accumulated, " ");
+            accumulated_length++;
+        }
+        strcat(accumulated, trimmed);
+        accumulated_length += strlen(trimmed);
+        
+        // Count braces and parentheses
+        brace_count = 0;
+        paren_count = 0;
+        int in_string = 0;
+        
+        for (const char *p = accumulated; *p; p++) {
+            if (*p == '"') {
+                in_string = !in_string;
+            } else if (!in_string) {
+                if (*p == '{') brace_count++;
+                else if (*p == '}') brace_count--;
+                else if (*p == '(') paren_count++;
+                else if (*p == ')') paren_count--;
+            }
+        }
+        
+        // Check if we need more input
+        int needs_more = 0;
+        if (brace_count > 0 || paren_count > 0) {
+            needs_more = 1;
+        }
+        
+        if (accumulated_length > 0) {
+            char last_char = accumulated[accumulated_length - 1];
+            if (last_char == '{' || last_char == ',' || last_char == '(' || 
+                last_char == '+' || last_char == '-' || last_char == '*' || 
+                last_char == '/' || last_char == '^') {
+                needs_more = 1;
+            }
+        }
+        
+        if (needs_more) {
+            in_multiline = 1;
+            continue;
+        }
+        
+        // We have a complete statement
+        in_multiline = 0;
+        
+        // Track if this is a function or variable definition
+        int is_func_def = (strstr(accumulated, "var ") == accumulated && 
+                          strchr(accumulated, '(') != NULL && 
+                          strchr(accumulated, '{') != NULL);
+        int is_var_def = (strstr(accumulated, "var ") == accumulated && !is_func_def);
+        
+        // Execute the statement
+        double result = compute_expression(accumulated);
+        
+        // Only report errors for non-definition statements
+        // Function and variable definitions may return NAN but that's OK
+        if (isnan(result) && !is_func_def && !is_var_def) {
+            fprintf(stderr, "Error in %s:%d: Failed to evaluate statement\n", 
+                    filename, line_num);
+        }
+        
+        if (is_func_def) func_count++;
+        else if (is_var_def) var_count++;
+        
+        // Clear accumulated buffer
+        accumulated[0] = '\0';
+        accumulated_length = 0;
+    }
+    
+    // Check for incomplete statement
+    if (accumulated_length > 0) {
+        fprintf(stderr, "Warning: Incomplete statement at end of %s\n", filename);
+    }
+    
+    free(accumulated);
+    free(line);
+    fclose(fp);
+    
+    // Calculate actual new counts
+    int new_func_count = 0;
+    uf = user_functions;
+    while (uf) {
+        new_func_count++;
+        uf = uf->next;
+    }
+    int new_var_count = 0;
+    v = variables;
+    while (v) {
+        new_var_count++;
+        v = v->next;
+    }
+    
+    func_count = new_func_count - saved_func_count;
+    var_count = new_var_count - saved_var_count;
+    
+    // Restore normal mode
+    silent_mode = 0;
+    
+    if (func_count > 0 || var_count > 0) {
+        printf("Loaded ");
+        if (func_count > 0) {
+            printf("%d function%s", func_count, func_count == 1 ? "" : "s");
+            if (var_count > 0) printf(", ");
+        }
+        if (var_count > 0) {
+            printf("%d variable%s", var_count, var_count == 1 ? "" : "s");
+        }
+        printf(" from %s\n", filename);
+    } else {
+        printf("Loaded %s\n", filename);
+    }
+    
+    return 0;
+}
+
+// Parse and execute load command
+static void parse_load_command(const char *line) {
+    // Skip "load" and whitespace
+    const char *p = line + 4;
+    while (*p && isspace(*p)) p++;
+    
+    if (*p == '\0') {
+        fprintf(stderr, "Error: load command requires a filename\n");
+        fprintf(stderr, "Usage: load \"filename.calc\" or load filename.calc\n");
+        return;
+    }
+    
+    // Extract filename (with or without quotes)
+    char filename[256];
+    int i = 0;
+    
+    if (*p == '"') {
+        // Quoted filename
+        p++;
+        while (*p && *p != '"' && i < 255) {
+            filename[i++] = *p++;
+        }
+    } else {
+        // Unquoted filename
+        while (*p && !isspace(*p) && i < 255) {
+            filename[i++] = *p++;
+        }
+    }
+    
+    filename[i] = '\0';
+    
+    if (filename[0] == '\0') {
+        fprintf(stderr, "Error: Empty filename\n");
+        return;
+    }
+    
+    load_script_file(filename);
+}
+
 int main(int argc, char *argv[])
 {
     char *input = NULL;        // Dynamic buffer for accumulated input
@@ -1544,6 +1803,20 @@ int main(int argc, char *argv[])
     
     // Enable colors
     enable_colors();
+    
+    // Check for command-line script file
+    int loaded_scripts = 0;
+    if (argc > 1) {
+        // Load script file(s) from command line
+        for (int i = 1; i < argc; i++) {
+            if (load_script_file(argv[i]) == 0) {
+                loaded_scripts++;
+            } else {
+                fprintf(stderr, "Failed to load %s\n", argv[i]);
+            }
+        }
+        printf("\n");
+    }
     
     print_normal("RCalc - Mathematical Expression Calculator with Variables and Functions\n");
     print_normal("Type 'help' for help\n");
@@ -1598,6 +1871,18 @@ int main(int argc, char *argv[])
         // Handle help command on any line
         if (strcmp(line, "help") == 0) {
             show_help();
+            // Clear any accumulated input and reset multiline state
+            input[0] = '\0';
+            input_length = 0;
+            in_multiline = 0;
+            brace_count = 0;
+            paren_count = 0;
+            continue;
+        }
+        
+        // Handle load command
+        if (strncmp(line, "load", 4) == 0 && (line[4] == '\0' || isspace(line[4]))) {
+            parse_load_command(line);
             // Clear any accumulated input and reset multiline state
             input[0] = '\0';
             input_length = 0;

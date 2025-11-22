@@ -1,0 +1,21 @@
+# Geometry functions
+
+var rectangle_area(var width, var height) {
+  return width * height;
+}
+
+var rectangle_perimeter(var width, var height) {
+  return 2 * (width + height);
+}
+
+var triangle_area(var base, var height) {
+  return 0.5 * base * height;
+}
+
+var sphere_volume(var radius) {
+  return 4 / 3 * pi * radius ^ 3;
+}
+
+var sphere_surface_area(var radius) {
+  return 4 * pi * radius ^ 2;
+}

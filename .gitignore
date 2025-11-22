@@ -1,6 +1,6 @@
 # Prerequisites
 *.d
-
+rcalc
 # Object files
 *.o
 *.ko
